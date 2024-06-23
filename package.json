@@ -62,6 +62,7 @@
     "saveDeployment:sepolia": "mkdir -p deployments/sepolia_$(date +%s) && cp -r deployment/deploy_*.json deployments/sepolia_$(date +%s) && cp .openzeppelin/sepolia.json deployments/sepolia_$(date +%s) && cp deployment/genesis.json deployments/sepolia_$(date +%s)",
     "saveDeployment:mainnet": "mkdir -p deployments/mainnet_$(date +%s) && cp -r deployment/deploy_*.json deployments/mainnet_$(date +%s) && cp .openzeppelin/mainnet.json deployments/mainnet_$(date +%s) && cp deployment/genesis.json deployments/mainnet_$(date +%s)",
     "test": "npx hardhat test test/contracts/**.test.js",
+    "test:cdk": "npx hardhat test test/contracts/cdkValidium.test.js",
     "docgen": "npx solidity-docgen --solc-module solc-0.8 -t ./docs/templates -e ./contracts/verifiers,./contracts/mocks",
     "prepare:testnet:CDKValidium:localhost": "npx hardhat run deployment/testnet/prepareTestnet.js --network localhost",
     "deploy:CDKValidium:localhost": "rm -f .openzeppelin/unknown-31337.json && node deployment/1_createGenesis.js && npx hardhat run deployment/2_deployCDKValidiumDeployer.js --network localhost && npx hardhat run deployment/3_deployContracts.js --network localhost",

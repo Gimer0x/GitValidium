@@ -1637,7 +1637,7 @@ describe('CDKValidium', () => {
                 zkProofFFlonk,
             ),
         ).to.be.revertedWith('OldStateRootDoesNotExist');
-
+        // here
         await expect(
             cdkValidiumContract.connect(aggregator1).verifyBatches(
                 currentPendingState - 1,
@@ -1682,6 +1682,7 @@ describe('CDKValidium', () => {
             .to.emit(cdkValidiumContract, 'ConsolidatePendingState')
             .withArgs(firstPendingState.lastVerifiedBatch, newStateRoot, ++currentPendingConsolidated);
 
+        
         verifyTimestamp = (await ethers.provider.getBlock()).timestamp;
         currentPendingState++;
         expect(currentPendingState).to.be.equal(await cdkValidiumContract.lastPendingState());
@@ -1693,6 +1694,7 @@ describe('CDKValidium', () => {
         expect(newLocalExitRoot).to.be.equal(currentPendingStateData.exitRoot);
         expect(newStateRoot).to.be.equal(currentPendingStateData.stateRoot);
 
+        // To be continued...
         // Check state consolidated
         currentVerifiedBatch += batchesForSequence;
         expect(currentVerifiedBatch).to.be.equal(await cdkValidiumContract.lastVerifiedBatch());
