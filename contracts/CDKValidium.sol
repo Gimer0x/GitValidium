@@ -9,7 +9,7 @@ import "./interfaces/IPolygonZkEVMBridge.sol";
 import "./lib/EmergencyManager.sol";
 import "./interfaces/ICDKValidiumErrors.sol";
 import "./interfaces/ICDKDataCommittee.sol";
-
+//import "hardhat/console.sol";
 /**
  * Contract responsible for managing the states and the updates of L2 network.
  * There will be a trusted sequencer, which is able to send transactions.
@@ -145,6 +145,9 @@ contract CDKValidium is
     // Max uint64
     uint256 internal constant _MAX_UINT_64 = type(uint64).max; // 0xFFFFFFFFFFFFFFFF
 
+    // Max time before entering revert mode
+    uint256 constant FORCED_TX_WINDOW = 7 days;
+
     // MATIC token address
     IERC20Upgradeable public immutable matic;
 
@@ -245,6 +248,9 @@ contract CDKValidium is
 
     // Indicates if forced batches are disallowed
     bool public isForcedBatchDisallowed;
+
+    // Indicates if the revert mode is active.
+    bool public isRevertModeActive;
 
     /**
      * @dev Emitted when the trusted sequencer sends a new batch of transactions
@@ -372,6 +378,12 @@ contract CDKValidium is
     event UpdateZkEVMVersion(uint64 numBatch, uint64 forkID, string version);
 
     /**
+     * @dev Emmited every time the revert mode is activated.
+     */
+
+    event ActivateRevertMode(address _sender, uint64 _lastForcedBatch);
+
+    /**
      * @param _globalExitRootManager Global exit root manager address
      * @param _matic MATIC token address
      * @param _rollupVerifier Rollup verifier address
@@ -479,6 +491,19 @@ contract CDKValidium is
         _;
     }
 
+    modifier onlyIfRevertModeIsNotActive() {
+        if(isRevertModeActive) {
+            revert RevertModeIsActive();
+        }
+        _;
+    }
+
+    modifier onlyIfRevertModeIsActive() {
+        if(!isRevertModeActive) {
+            revert RevertModeIsNotActive();
+        }
+        _;
+    }
     /////////////////////////////////////
     // Sequence/Verify batches functions
     ////////////////////////////////////
@@ -1691,5 +1716,58 @@ contract CDKValidium is
         } else {
             return false;
         }
+    }
+    
+    /*
+     * @notice Function to activate the revert mode
+     * @param initNumBatch Batch which the aggregator starts the verification
+     */
+    function enterRevertMode(
+        ForcedBatchData memory forcedBatchData
+    ) 
+            external 
+            isForceBatchAllowed
+            ifNotEmergencyState
+            onlyIfRevertModeIsNotActive
+    {
+        uint64 lastForceBatchSequencedTemp = lastForceBatchSequenced;
+
+        // Sanity check, should be unreachable
+        if (lastForceBatchSequencedTemp > lastForceBatch) {
+            revert ForceBatchesOverflow();
+        }
+
+        if(lastForceBatch == lastForceBatchSequencedTemp)
+            revert noForcedBatchPending();
+
+        bytes32 hashedForcedBatchData = keccak256(
+                abi.encodePacked(
+                    keccak256(forcedBatchData.transactions),
+                    forcedBatchData.globalExitRoot,
+                    forcedBatchData.minForcedTimestamp
+                )
+        );
+        
+        // The next forced batch hash should be equal to the hash forced batch data.
+        if(hashedForcedBatchData != forcedBatches[++lastForceBatchSequencedTemp])
+            revert ForcedDataDoesNotMatch();
+
+        // Verify if the next forced batch has not been sequenced after a window period.
+        if(forcedBatchData.minForcedTimestamp + FORCED_TX_WINDOW > block.timestamp)
+            revert TxWindowNotExpired();
+
+        isRevertModeActive = true;
+
+        emit ActivateRevertMode(msg.sender, lastForceBatchSequencedTemp);
+    }
+
+    function revertLastVerifiedBatch() 
+        external
+        isForceBatchAllowed 
+        ifNotEmergencyState
+        onlyIfRevertModeIsActive
+    {
+        // The lastVerifiedBatch decreases by one each time the revertLastVerifiedBatch() 
+        // function is executed, for each REVERT_PERIOD
     }
 }

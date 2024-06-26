@@ -159,7 +159,7 @@ describe('CDKValidium', () => {
         l2CoinBase = trustedSequencer.address;
     });
     
-   /* it("should allow trusted sequencer to sequence a batch", async () =>{
+   it("should allow trusted sequencer to sequence a batch", async () =>{
         const l2txData = '0x123456';
         const transactionsHash = calculateBatchHashData(l2txData);
         const currentTimestamp = (await ethers.provider.getBlock()).timestamp;
@@ -632,9 +632,6 @@ describe('CDKValidium', () => {
 
     });
 
-    
-
-    
     it('should verify a sequenced batch using verifyBatches', async () => { 
         const l2txData = '0x123456';
         const transactionsHash = calculateBatchHashData(l2txData);
@@ -693,202 +690,7 @@ describe('CDKValidium', () => {
         ).to.emit(cdkValidiumContract, 'VerifyBatches')
          .withArgs(numBatch, newStateRoot, aggregator1.address);
     });
-    */
-    /*
-    it("should test the pending state", async () => {
-        const l2txData = '0x123456';
-        const transactionsHash = calculateBatchHashData(l2txData);
-        const currentTimestamp = (await ethers.provider.getBlock()).timestamp;
-
-        const batchesForSequence = 5;
-        const sequence = {
-            transactionsHash,
-            globalExitRoot: ethers.constants.HashZero,
-            timestamp: currentTimestamp,
-            minForcedTimestamp: 0,
-        };
-        const sequencesArray = Array(batchesForSequence).fill(sequence);
-        // Make 20 sequences of 5 batches, with 1 minut timestamp difference
-        for (let i = 0; i < 20; i++) {
-            await expect(cdkValidiumContract.connect(trustedSequencer).sequenceBatches(sequencesArray, trustedSequencer.address, []))
-                .to.emit(cdkValidiumContract, 'SequenceBatches');
-
-            await ethers.provider.send('evm_increaseTime', [60]);
-        }
-
-        // Forge first sequence with verifyBAtches
-        const newLocalExitRoot = '0x0000000000000000000000000000000000000000000000000000000000000001';
-        const newStateRoot = '0x0000000000000000000000000000000000000000000000000000000000000002';
-        const zkProofFFlonk = new Array(24).fill(ethers.constants.HashZero);
-
-        let currentPendingState = 0;
-        let currentNumBatch = 0;
-        let newBatch = currentNumBatch + batchesForSequence;
-
-
-
-        // Verify batch
-        await expect(
-            cdkValidiumContract.connect(aggregator1).verifyBatches(
-                currentPendingState,
-                currentNumBatch,
-                newBatch,
-                newLocalExitRoot,
-                newStateRoot,
-                zkProofFFlonk,
-            ),
-        ).to.emit(cdkValidiumContract, 'VerifyBatches')
-            .withArgs(newBatch, newStateRoot, aggregator1.address);
-
-        // Check pending state
-        let verifyTimestamp = (await ethers.provider.getBlock()).timestamp;
-
-        // verifying the sames batch is not possible. 
-        await expect(
-            cdkValidiumContract.connect(aggregator1).verifyBatches(
-                currentPendingState,
-                0,
-                5,
-                newLocalExitRoot,
-                newStateRoot,
-                zkProofFFlonk,
-            ),
-        ).to.be.revertedWith("FinalNumBatchBelowLastVerifiedBatch");
-
-        // Check the last valid batch verified.
-        currentPendingState++;
-        expect(currentPendingState).to.be.equal(await cdkValidiumContract.lastPendingState());
-
-        currentPendingStateData = await cdkValidiumContract.pendingStateTransitions(currentPendingState);
-        expect(verifyTimestamp).to.be.equal(currentPendingStateData.timestamp);
-        expect(newBatch).to.be.equal(currentPendingStateData.lastVerifiedBatch);
-        expect(newLocalExitRoot).to.be.equal(currentPendingStateData.exitRoot);
-        expect(newStateRoot).to.be.equal(currentPendingStateData.stateRoot);
-
-        currentNumBatch = newBatch;
-        newBatch += batchesForSequence;
-
-        /**
-        * @notice verifyBatchesTrustedAggregator() allows an aggregator to verify multiple batches
-        * @param pendingStateNum Init pending state, 0 if consolidated state is used
-        * @param initNumBatch Batch which the aggregator starts the verification
-        * @param finalNewBatch Last batch aggregator intends to verify
-        * @param newLocalExitRoot  New local exit root once the batch is processed
-        * @param newStateRoot New State root once the batch is processed
-        * @param proof fflonk proof
-        
-        await expect(
-            cdkValidiumContract.connect(trustedAggregator).verifyBatchesTrustedAggregator(
-                0,
-                1,
-                newBatch,
-                newLocalExitRoot,
-                newStateRoot,
-                zkProofFFlonk,
-            ),
-        ).to.be.revertedWith('OldStateRootDoesNotExist');
-
-        await expect(
-            cdkValidiumContract.connect(aggregator1).verifyBatches(
-                0,
-                0,
-                newBatch,
-                newLocalExitRoot,
-                newStateRoot,
-                zkProofFFlonk,
-            ),
-        ).to.emit(cdkValidiumContract, 'VerifyBatches')
-            .withArgs(newBatch, newStateRoot, aggregator1.address);
-
-        // Check pending state
-        verifyTimestamp = (await ethers.provider.getBlock()).timestamp;
-        currentPendingState++;
-        expect(currentPendingState).to.be.equal(await cdkValidiumContract.lastPendingState());
-
-        currentPendingStateData = await cdkValidiumContract.pendingStateTransitions(currentPendingState);
-        expect(verifyTimestamp).to.be.equal(currentPendingStateData.timestamp);
-        expect(newBatch).to.be.equal(currentPendingStateData.lastVerifiedBatch);
-        expect(newLocalExitRoot).to.be.equal(currentPendingStateData.exitRoot);
-        expect(newStateRoot).to.be.equal(currentPendingStateData.stateRoot);
-
-        // Verify batches using old pending state
-        currentNumBatch = newBatch;
-        newBatch += batchesForSequence;
-
-        // Must specify pending state num while is not consolidated
-        await expect(
-            cdkValidiumContract.connect(trustedAggregator).verifyBatchesTrustedAggregator(
-                0,
-                currentNumBatch - 5,
-                newBatch,
-                newLocalExitRoot,
-                newStateRoot,
-                zkProofFFlonk,
-            ),
-        ).to.be.revertedWith('OldStateRootDoesNotExist');
-
-        await expect(
-            cdkValidiumContract.connect(aggregator1).verifyBatches(
-                currentPendingState - 1,
-                currentNumBatch - 5,
-                newBatch,
-                newLocalExitRoot,
-                newStateRoot,
-                zkProofFFlonk,
-            ),
-        ).to.emit(cdkValidiumContract, 'VerifyBatches')
-            .withArgs(newBatch, newStateRoot, aggregator1.address);
-        
-        verifyTimestamp = (await ethers.provider.getBlock()).timestamp;
-        // Should increase to be equal to three.
-        currentPendingState++;
-        expect(currentPendingState).to.be.equal(await cdkValidiumContract.lastPendingState());
-
-        currentPendingStateData = await cdkValidiumContract.pendingStateTransitions(currentPendingState);
-        expect(verifyTimestamp).to.be.equal(currentPendingStateData.timestamp);
-        expect(newBatch).to.be.equal(currentPendingStateData.lastVerifiedBatch);
-        expect(newLocalExitRoot).to.be.equal(currentPendingStateData.exitRoot);
-        expect(newStateRoot).to.be.equal(currentPendingStateData.stateRoot);
-
-        // Consolidate using verifyBatches
-        const firstPendingState = await cdkValidiumContract.pendingStateTransitions(1);
-        await ethers.provider.send('evm_setNextBlockTimestamp', [firstPendingState.timestamp.toNumber() + pendingStateTimeoutDefault]);
-
-        let currentPendingConsolidated = 0;
-        currentNumBatch = newBatch;
-        newBatch += batchesForSequence;
-
-        await expect(
-            cdkValidiumContract.connect(aggregator1).verifyBatches(
-                currentPendingState,
-                currentNumBatch,
-                newBatch,
-                newLocalExitRoot,
-                newStateRoot,
-                zkProofFFlonk,
-            ),
-        ).to.emit(cdkValidiumContract, 'VerifyBatches')
-            .withArgs(newBatch, newStateRoot, aggregator1.address)
-            .to.emit(cdkValidiumContract, 'ConsolidatePendingState')
-            .withArgs(firstPendingState.lastVerifiedBatch, newStateRoot, ++currentPendingConsolidated);
-
-        verifyTimestamp = (await ethers.provider.getBlock()).timestamp;
-        currentPendingState++;
-        console.log(currentPendingState);
-        expect(currentPendingState).to.be.equal(await cdkValidiumContract.lastPendingState());
-        expect(currentPendingConsolidated).to.be.equal(await cdkValidiumContract.lastPendingStateConsolidated());
-
-        currentPendingStateData = await cdkValidiumContract.pendingStateTransitions(currentPendingState);
-        expect(verifyTimestamp).to.be.equal(currentPendingStateData.timestamp);
-        expect(newBatch).to.be.equal(currentPendingStateData.lastVerifiedBatch);
-        expect(newLocalExitRoot).to.be.equal(currentPendingStateData.exitRoot);
-        expect(newStateRoot).to.be.equal(currentPendingStateData.stateRoot);
-
-        currentVerifiedBatch += batchesForSequence;
-        console.log("Last: ", await cdkValidiumContract.lastVerifiedBatch());
-        expect(currentVerifiedBatch).to.be.equal(await cdkValidiumContract.lastVerifiedBatch());
-        expect(newStateRoot).to.be.equal(await cdkValidiumContract.batchNumToStateRoot(currentVerifiedBatch));
-    }); */
+    
 
     it("should test pending state", async () => {
         const l2txData = '0x123456';
@@ -896,22 +698,23 @@ describe('CDKValidium', () => {
         const currentTimestamp = (await ethers.provider.getBlock()).timestamp;
 
         const batchesForSequence = 5;
-        const sequence = {
+        const batchData = {
             transactionsHash,
             globalExitRoot: ethers.constants.HashZero,
             timestamp: currentTimestamp,
             minForcedTimestamp: 0,
         };
-        const sequencesArray = Array(batchesForSequence).fill(sequence);
-        
+        const sequencesArray = Array(batchesForSequence).fill(batchData);
+        console.log(sequencesArray.length);
+
         // Make 20 sequences of 5 batches, with 1 minut timestamp difference
         for (let i = 0; i < 20; i++) {
             await expect(cdkValidiumContract.connect(trustedSequencer).sequenceBatches(sequencesArray, trustedSequencer.address, []))
                 .to.emit(cdkValidiumContract, 'SequenceBatches');
+            await ethers.provider.send('evm_increaseTime', [60]);
         }
-        await ethers.provider.send('evm_increaseTime', [60]);
-
-        // Forge first sequence with verifyBAtches
+        
+        // Forge first sequence with verifyBatches
         const newLocalExitRoot = '0x0000000000000000000000000000000000000000000000000000000000000001';
         const newStateRoot = '0x0000000000000000000000000000000000000000000000000000000000000002';
         const zkProofFFlonk = new Array(24).fill(ethers.constants.HashZero);
@@ -920,7 +723,7 @@ describe('CDKValidium', () => {
         let currentNumBatch = 0;
         let newBatch = currentNumBatch + batchesForSequence;
 
-        // Verify batch
+        // Verify batch --> 0 to 5
         await expect(
             cdkValidiumContract.connect(aggregator1).verifyBatches(
                 currentPendingState,
@@ -935,12 +738,12 @@ describe('CDKValidium', () => {
 
         let verifyTimestamp = (await ethers.provider.getBlock()).timestamp;
 
-        // Check pending state
+        // Check pending state to be equal to one. 
         currentPendingState++;
-        // Pending state should be equal to one. 
         expect(currentPendingState).to.be.equal(await cdkValidiumContract.lastPendingState());
 
         let currentPendingStateData = await cdkValidiumContract.pendingStateTransitions(currentPendingState);
+
         expect(verifyTimestamp).to.be.equal(currentPendingStateData.timestamp);
         expect(newBatch).to.be.equal(currentPendingStateData.lastVerifiedBatch);
         expect(newLocalExitRoot).to.be.equal(currentPendingStateData.exitRoot);
@@ -959,7 +762,7 @@ describe('CDKValidium', () => {
             ),
         ).to.be.revertedWith('FinalNumBatchBelowLastVerifiedBatch');
 
-        // Pending state is equal to one. 
+        // Should fail because pending state is equal to one not two.
         await expect(
             cdkValidiumContract.connect(trustedAggregator).verifyBatchesTrustedAggregator(
                 2,
@@ -971,6 +774,7 @@ describe('CDKValidium', () => {
             ),
         ).to.be.revertedWith('PendingStateDoesNotExist');
 
+        // The currentNumBatch is different from the last verified batch in the current pending state.
         await expect(
             cdkValidiumContract.connect(trustedAggregator).verifyBatchesTrustedAggregator(
                 currentPendingState,
@@ -978,7 +782,7 @@ describe('CDKValidium', () => {
                 newBatch,
                 newLocalExitRoot,
                 newStateRoot,
-                zkProofFFlonk,
+                zkProofFFlonk
             ),
         ).to.be.revertedWith('InitNumBatchDoesNotMatchPendingState');
 
@@ -986,7 +790,9 @@ describe('CDKValidium', () => {
         // Clean pending state if any
         currentNumBatch = newBatch;
         newBatch += batchesForSequence;
-
+        console.log("currentNumBatch: ", currentNumBatch);
+        console.log("newBatch: ", newBatch);
+        console.log("currentPendingState", currentPendingState);
         await expect(
             cdkValidiumContract.connect(trustedAggregator).verifyBatchesTrustedAggregator(
                 currentPendingState,
@@ -994,7 +800,7 @@ describe('CDKValidium', () => {
                 newBatch,
                 newLocalExitRoot,
                 newStateRoot,
-                zkProofFFlonk,
+                zkProofFFlonk
             ),
         ).to.emit(cdkValidiumContract, 'VerifyBatchesTrustedAggregator')
             .withArgs(newBatch, newStateRoot, trustedAggregator.address);
@@ -1003,6 +809,11 @@ describe('CDKValidium', () => {
         currentPendingState = 0;
         expect(currentPendingState).to.be.equal(await cdkValidiumContract.lastPendingState());
         expect(0).to.be.equal(await cdkValidiumContract.lastPendingStateConsolidated());
+
+        // Check consolidated state
+        let currentVerifiedBatch = newBatch;
+        expect(currentVerifiedBatch).to.be.equal(await cdkValidiumContract.lastVerifiedBatch());
+        expect(newStateRoot).to.be.equal(await cdkValidiumContract.batchNumToStateRoot(currentVerifiedBatch));
 
         // Pending state should not exist because it was already cleared. 
         await expect(
@@ -1015,7 +826,7 @@ describe('CDKValidium', () => {
                 zkProofFFlonk,
             ),
         ).to.be.revertedWith('PendingStateDoesNotExist');
-
+        console.log("currentNumBatch: ", currentNumBatch)
         // Since this pending state was not consolidated, the currentNumBatch does not have stored root
         expect(ethers.constants.HashZero).to.be.equal(await cdkValidiumContract.batchNumToStateRoot(currentNumBatch));
         
@@ -1060,7 +871,7 @@ describe('CDKValidium', () => {
         verifyTimestamp = (await ethers.provider.getBlock()).timestamp;
 
         currentPendingState++;
-        console.log(await cdkValidiumContract.lastPendingState());
+        console.log("Last Pending: ", await cdkValidiumContract.lastPendingState());
 
         // Current pending state should be equal to one. 
         currentPendingStateData = await cdkValidiumContract.pendingStateTransitions(currentPendingState);
@@ -1070,7 +881,7 @@ describe('CDKValidium', () => {
         expect(newStateRoot).to.be.equal(currentPendingStateData.stateRoot);
 
 
-        console.log(await cdkValidiumContract.lastPendingStateConsolidated());
+        console.log("Consolidated: ", await cdkValidiumContract.lastPendingStateConsolidated());
 
         // Verify another sequence from batch 0
         currentNumBatch = newBatch;
@@ -1101,7 +912,7 @@ describe('CDKValidium', () => {
 
         // Check pending state
         verifyTimestamp = (await ethers.provider.getBlock()).timestamp;
-        console.log(await cdkValidiumContract.lastPendingState());
+        console.log("New pending: ", await cdkValidiumContract.lastPendingState());
         currentPendingState++;
         expect(currentPendingState).to.be.equal(await cdkValidiumContract.lastPendingState());
 
@@ -1161,6 +972,7 @@ describe('CDKValidium', () => {
         currentNumBatch = newBatch;
         newBatch += batchesForSequence;
 
+        console.log("currentPendingState 2: ", currentPendingState)
         await expect(
             cdkValidiumContract.connect(aggregator1).verifyBatches(
                 currentPendingState,
@@ -1177,7 +989,7 @@ describe('CDKValidium', () => {
 
         verifyTimestamp = (await ethers.provider.getBlock()).timestamp;
         currentPendingState++;
-        console.log(await cdkValidiumContract.lastPendingState());
+        console.log("Last Pending: ", await cdkValidiumContract.lastPendingState());
         expect(currentPendingState).to.be.equal(await cdkValidiumContract.lastPendingState());
         console.log(await cdkValidiumContract.lastPendingStateConsolidated());
         expect(currentPendingConsolidated).to.be.equal(await cdkValidiumContract.lastPendingStateConsolidated());
@@ -1187,5 +999,143 @@ describe('CDKValidium', () => {
         expect(newBatch).to.be.equal(currentPendingStateData.lastVerifiedBatch);
         expect(newLocalExitRoot).to.be.equal(currentPendingStateData.exitRoot);
         expect(newStateRoot).to.be.equal(currentPendingStateData.stateRoot);
+
+        // Check state consolidated
+        currentVerifiedBatch += batchesForSequence;
+        console.log("currentVerifiedBatch:", currentVerifiedBatch);
+        expect(currentVerifiedBatch).to.be.equal(await cdkValidiumContract.lastVerifiedBatch());
+        expect(newStateRoot).to.be.equal(await cdkValidiumContract.batchNumToStateRoot(currentVerifiedBatch));
+
+        // Consolidate using sendBatches
+        const secondPendingState = await cdkValidiumContract.pendingStateTransitions(2);
+        await ethers.provider.send('evm_setNextBlockTimestamp', [secondPendingState.timestamp.toNumber() + pendingStateTimeoutDefault]);
+
+        
+        await expect(cdkValidiumContract.connect(trustedSequencer).sequenceBatches(sequencesArray, trustedSequencer.address, []))
+            .to.emit(cdkValidiumContract, 'SequenceBatches')
+            .to.emit(cdkValidiumContract, 'ConsolidatePendingState')
+            .withArgs(secondPendingState.lastVerifiedBatch, newStateRoot, ++currentPendingConsolidated);
+
+        console.log("currentPendingConsolidated: ", currentPendingConsolidated);
+
+        expect(currentPendingState).to.be.equal(await cdkValidiumContract.lastPendingState());
+        expect(currentPendingConsolidated).to.be.equal(await cdkValidiumContract.lastPendingStateConsolidated());
+
+        // Check state consolidated
+        currentVerifiedBatch += batchesForSequence;
+        expect(currentVerifiedBatch).to.be.equal(await cdkValidiumContract.lastVerifiedBatch());
+        console.log("Last verified batch: ", await cdkValidiumContract.lastVerifiedBatch())
+        expect(newStateRoot).to.be.equal(await cdkValidiumContract.batchNumToStateRoot(currentVerifiedBatch));
+
+        // Put a lot of pending states and check that half of them are consoldiated
+        for (let i = 0; i < 8; i++) {
+            currentNumBatch = newBatch;
+            newBatch += batchesForSequence;
+            await expect(
+                cdkValidiumContract.connect(aggregator1).verifyBatches(
+                    currentPendingState,
+                    currentNumBatch,
+                    newBatch,
+                    newLocalExitRoot,
+                    newStateRoot,
+                    zkProofFFlonk,
+                ),
+            ).to.emit(cdkValidiumContract, 'VerifyBatches')
+                .withArgs(newBatch, newStateRoot, aggregator1.address);
+
+            currentPendingState++;
+        }
+        console.log("currentPendingState After Loop: ", currentPendingState);
+
+        expect(currentPendingState).to.be.equal(await cdkValidiumContract.lastPendingState());
+
+        currentPendingConsolidated = await cdkValidiumContract.lastPendingStateConsolidated();
+        const lastPendingState = await cdkValidiumContract.pendingStateTransitions(currentPendingState);
+        // console.log("lastPendingState: ", lastPendingState);
+        await ethers.provider.send('evm_setNextBlockTimestamp', [lastPendingState.timestamp.toNumber() + pendingStateTimeoutDefault]);
+
+        
+        // call verify batches and check that half of them are consolidated
+        expect(currentPendingState).to.be.equal(await cdkValidiumContract.lastPendingState());
+        expect(currentPendingConsolidated).to.be.equal(await cdkValidiumContract.lastPendingStateConsolidated());
+        console.log("currentPendingConsolidated: ", currentPendingConsolidated);
+
+        const nextPendingConsolidated = Number(currentPendingConsolidated) + 1;
+        const nextConsolidatedStateNum = nextPendingConsolidated + Number(Math.floor((currentPendingState - nextPendingConsolidated) / 2));
+        const nextConsolidatedState = await cdkValidiumContract.pendingStateTransitions(nextConsolidatedStateNum);
+
+        await expect(cdkValidiumContract.connect(trustedSequencer).sequenceBatches(sequencesArray, trustedSequencer.address, []))
+            .to.emit(cdkValidiumContract, 'SequenceBatches')
+            .to.emit(cdkValidiumContract, 'ConsolidatePendingState')
+            .withArgs(nextConsolidatedState.lastVerifiedBatch, newStateRoot, nextConsolidatedStateNum);
+
+        // Put pendingState to 0 and check that the pending state is clear after verifyBatches
+        await expect(
+            cdkValidiumContract.connect(admin).setPendingStateTimeout(0),
+        ).to.emit(cdkValidiumContract, 'SetPendingStateTimeout').withArgs(0);
+
+        currentNumBatch = newBatch;
+        newBatch += batchesForSequence;
+        await expect(
+            cdkValidiumContract.connect(aggregator1).verifyBatches(
+                currentPendingState,
+                currentNumBatch,
+                newBatch,
+                newLocalExitRoot,
+                newStateRoot,
+                zkProofFFlonk,
+            ),
+        ).to.emit(cdkValidiumContract, 'VerifyBatches')
+            .withArgs(newBatch, newStateRoot, aggregator1.address);
+
+        currentPendingState = 0;
+        expect(currentPendingState).to.be.equal(await cdkValidiumContract.lastPendingState());
+        expect(0).to.be.equal(await cdkValidiumContract.lastPendingStateConsolidated());
+
+        currentVerifiedBatch = newBatch;
+        expect(currentVerifiedBatch).to.be.equal(await cdkValidiumContract.lastVerifiedBatch());
+        expect(newStateRoot).to.be.equal(await cdkValidiumContract.batchNumToStateRoot(currentVerifiedBatch));
     });
+
+    it("Anyone should activate emergency state due halt timeout", async () => {
+        const l2txData = '0x123456';
+        const transactionsHash = calculateBatchHashData(l2txData);
+        const currentTimestamp = (await ethers.provider.getBlock()).timestamp;
+
+        const batchData = {
+            transactionsHash,
+            globalExitRoot: ethers.constants.HashZero,
+            timestamp: ethers.BigNumber.from(currentTimestamp),
+            minForcedTimestamp: 0
+        };
+
+        const lastBatchSequenced = 1;
+        await expect(cdkValidiumContract.connect(trustedSequencer).sequenceBatches([batchData], trustedSequencer.address, []))
+            .to.emit(cdkValidiumContract, 'SequenceBatches')
+            .withArgs(lastBatchSequenced);
+
+        const sequencedTimestmap = Number((await cdkValidiumContract.sequencedBatches(1)).sequencedTimestamp);
+        const haltTimeout = HALT_AGGREGATION_TIMEOUT;
+
+        // Activate the emergency state
+        await expect(cdkValidiumContract.connect(user).activateEmergencyState(2))
+            .to.be.revertedWith('BatchNotSequencedOrNotSequenceEnd');
+
+        // Check batch is already verified (Mocking)
+        await cdkValidiumContract.setVerifiedBatch(1);
+        await expect(cdkValidiumContract.connect(user).activateEmergencyState(1))
+            .to.be.revertedWith('BatchAlreadyVerified');
+        await cdkValidiumContract.setVerifiedBatch(0);
+
+        // check timeout is not expired
+        await expect(cdkValidiumContract.connect(user).activateEmergencyState(1))
+            .to.be.revertedWith('HaltTimeoutNotExpired');
+
+        await ethers.provider.send('evm_setNextBlockTimestamp', [sequencedTimestmap + haltTimeout]);
+
+        // Activate emergency state
+        await expect(cdkValidiumContract.connect(user).activateEmergencyState(1))
+            .to.emit(cdkValidiumContract, 'EmergencyStateActivated');
+    })
 });
+

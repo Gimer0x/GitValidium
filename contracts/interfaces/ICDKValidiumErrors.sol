@@ -208,4 +208,24 @@ interface ICDKValidiumErrors {
      * @dev Thrown when try to activate force batches when they are already active
      */
     error ForceBatchesAlreadyActive();
+
+    /**
+     * @dev Thrown when try to use a function that is not allowed during revert mode
+     */
+    error RevertModeIsActive();
+
+    /**
+     * @dev Thrown when try to use a function that is allowed only during revert mode
+     */
+    error RevertModeIsNotActive();
+
+    /**
+    @dev Thrown when try to use a function that is allowed only during revert mode
+    */
+    error TxWindowNotExpired();
+
+    /**
+    @dev Thrown when there is no pending forced batch to start the revert mode
+    */
+    error noForcedBatchPending();
 }

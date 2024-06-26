@@ -5,6 +5,7 @@ require('solidity-coverage');
 require('@nomiclabs/hardhat-etherscan');
 require('@openzeppelin/hardhat-upgrades');
 require('hardhat-dependency-compiler');
+require("hardhat-contract-sizer");
 
 const DEFAULT_MNEMONIC = 'test test test test test test test test test test test junk';
 
@@ -33,7 +34,7 @@ module.exports = {
           evmVersion: 'paris',
           optimizer: {
             enabled: true,
-            runs: 999999
+            runs: 200
           }
         }
       },
@@ -144,4 +145,11 @@ module.exports = {
       mainnet: `${process.env.ETHERSCAN_API_KEY}`
     },
   },
+  contractSizer: {
+    alphaSort: true,
+    disambiguatePaths: false,
+    runOnCompile: true,
+    strict: true,
+    only: ['CDKValidium.sol']
+  }
 };

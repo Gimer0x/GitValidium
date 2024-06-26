@@ -1694,7 +1694,6 @@ describe('CDKValidium', () => {
         expect(newLocalExitRoot).to.be.equal(currentPendingStateData.exitRoot);
         expect(newStateRoot).to.be.equal(currentPendingStateData.stateRoot);
 
-        // To be continued...
         // Check state consolidated
         currentVerifiedBatch += batchesForSequence;
         expect(currentVerifiedBatch).to.be.equal(await cdkValidiumContract.lastVerifiedBatch());
