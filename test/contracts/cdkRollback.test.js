@@ -43,6 +43,7 @@ describe('CDKValidium', () => {
     const MAX_BATCH_MULTIPLIER = 12;
     const HALT_AGGREGATION_TIMEOUT = 60 * 60 * 24 * 7; // 7 days
     const FORCED_TX_WINDOW = 60 * 60 * 24 * 7 // 7 days
+    const REVERT_PERIOD = 60 * 60;
     const _MAX_VERIFY_BATCHES = 1000;    
     beforeEach('Deploy contract', async () => {
         upgrades.silenceWarnings();
@@ -76,6 +77,7 @@ describe('CDKValidium', () => {
         }
         const nonceProxyBridge = Number((await ethers.provider.getTransactionCount(deployer.address))) + (firstDeployment ? 3 : 2);
         const nonceProxyCommittee = nonceProxyBridge + (firstDeployment ? 2 : 1);
+
         // Always have to redeploy impl since the PolygonZkEVMGlobalExitRoot address changes
         const nonceProxyCDKValidium = nonceProxyCommittee + 2;
 
@@ -165,7 +167,9 @@ describe('CDKValidium', () => {
         const maticAmount = await cdkValidiumContract.getForcedBatchFee();
         const lastGlobalExitRoot = await PolygonZkEVMGlobalExitRoot.getLastGlobalExitRoot();
 
-        expect(await cdkValidiumContract.isRevertModeActive()).to.be.equal(false);
+        let lastRevertModeTimestamp =  await cdkValidiumContract.lastRevertModeTimestamp();
+        expect(lastRevertModeTimestamp.toNumber() + REVERT_PERIOD)
+            .to.be.lessThan((await ethers.provider.getBlock()).timestamp);
 
         await expect(
             cdkValidiumContract.connect(admin).activateForceBatches(),
@@ -205,7 +209,9 @@ describe('CDKValidium', () => {
             .to.emit(cdkValidiumContract, 'ActivateRevertMode')
             .withArgs(user.address, 1);
 
-        expect(await cdkValidiumContract.isRevertModeActive()).to.be.equal(true);
+        lastRevertModeTimestamp =  await cdkValidiumContract.lastRevertModeTimestamp();
+        expect(lastRevertModeTimestamp.toNumber() + REVERT_PERIOD)
+            .to.be.greaterThanOrEqual((await ethers.provider.getBlock()).timestamp);
         
     });
 
@@ -217,7 +223,9 @@ describe('CDKValidium', () => {
         const maticAmount = await cdkValidiumContract.getForcedBatchFee();
         const lastGlobalExitRoot = await PolygonZkEVMGlobalExitRoot.getLastGlobalExitRoot();
 
-        expect(await cdkValidiumContract.isRevertModeActive()).to.be.equal(false);
+        let lastRevertModeTimestamp =  await cdkValidiumContract.lastRevertModeTimestamp();
+        expect(lastRevertModeTimestamp.toNumber() + REVERT_PERIOD)
+            .to.be.lessThan((await ethers.provider.getBlock()).timestamp);
 
         await expect(
             cdkValidiumContract.connect(admin).activateForceBatches(),
@@ -292,7 +300,9 @@ describe('CDKValidium', () => {
             .to.emit(cdkValidiumContract, 'ActivateRevertMode')
             .withArgs(user.address, 2);
 
-        expect(await cdkValidiumContract.isRevertModeActive()).to.be.equal(true);
+        lastRevertModeTimestamp =  await cdkValidiumContract.lastRevertModeTimestamp();
+        expect(lastRevertModeTimestamp.toNumber() + REVERT_PERIOD)
+            .to.be.greaterThanOrEqual((await ethers.provider.getBlock()).timestamp);
     });
 
     it("should activate revert mode after not sequencing a batch using function sequenceForceBatches()", async () => {
@@ -301,7 +311,9 @@ describe('CDKValidium', () => {
         const maticAmount = await cdkValidiumContract.getForcedBatchFee();
         const lastGlobalExitRoot = await PolygonZkEVMGlobalExitRoot.getLastGlobalExitRoot();
 
-        expect(await cdkValidiumContract.isRevertModeActive()).to.be.equal(false);
+        let lastRevertModeTimestamp =  await cdkValidiumContract.lastRevertModeTimestamp();
+        expect(lastRevertModeTimestamp.toNumber() + REVERT_PERIOD)
+            .to.be.lessThan((await ethers.provider.getBlock()).timestamp);
 
         await expect(
             cdkValidiumContract.connect(admin).activateForceBatches(),
@@ -353,7 +365,9 @@ describe('CDKValidium', () => {
             .to.emit(cdkValidiumContract, 'ActivateRevertMode')
             .withArgs(user.address, 2);
 
-        expect(await cdkValidiumContract.isRevertModeActive()).to.be.equal(true);
+        lastRevertModeTimestamp =  await cdkValidiumContract.lastRevertModeTimestamp();
+        expect(lastRevertModeTimestamp.toNumber() + REVERT_PERIOD)
+            .to.be.greaterThanOrEqual((await ethers.provider.getBlock()).timestamp);
     });
 
     it("should not activat revert mode if forced batches is not active", async () => {
@@ -371,7 +385,9 @@ describe('CDKValidium', () => {
         await expect(cdkValidiumContract.connect(user).enterRevertMode(forceBatchStruct))
             .to.be.revertedWith("ForceBatchNotAllowed")
 
-        expect(await cdkValidiumContract.isRevertModeActive()).to.be.equal(false);
+        let lastRevertModeTimestamp =  await cdkValidiumContract.lastRevertModeTimestamp();
+        expect(lastRevertModeTimestamp.toNumber() + REVERT_PERIOD)
+            .to.be.lessThan((await ethers.provider.getBlock()).timestamp);
     });
 
     it("should not activate revert mode if emergency state is activated", async () => {

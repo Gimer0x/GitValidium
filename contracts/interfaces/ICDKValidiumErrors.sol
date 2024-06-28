@@ -228,4 +228,9 @@ interface ICDKValidiumErrors {
     @dev Thrown when there is no pending forced batch to start the revert mode
     */
     error noForcedBatchPending();
+
+    /**
+    @dev Thrown when the function revertLastVerifiedBatches has been executed for a REVERT_PERIOD
+    */
+    error notAllowedToRevertBatches();
 }

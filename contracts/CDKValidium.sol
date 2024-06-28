@@ -101,6 +101,14 @@ contract CDKValidium is
         uint64 trustedAggregatorTimeout;
     }
 
+    struct StateRootData {
+        uint64 timestamp;
+        uint64 initVerifiedBatch;
+        uint64 lastVerifiedBatch;
+        bytes32 exitRoot;
+        bytes32 stateRoot;
+    }
+
     // Modulus zkSNARK
     uint256 internal constant _RFIELD =
         21888242871839275222246405745257275088548364400416034343698204186575808495617;
@@ -147,6 +155,9 @@ contract CDKValidium is
 
     // Max time before entering revert mode
     uint256 constant FORCED_TX_WINDOW = 7 days;
+
+    // Revert period duration
+    uint256 constant REVERT_PERIOD = 1 hours;
 
     // MATIC token address
     IERC20Upgradeable public immutable matic;
@@ -207,6 +218,9 @@ contract CDKValidium is
     // Last batch verified by the aggregators
     uint64 public lastVerifiedBatch;
 
+    // Last revert mode activation timestamp
+    uint256 public lastRevertModeTimestamp;
+
     // Trusted aggregator address
     address public trustedAggregator;
 
@@ -249,9 +263,8 @@ contract CDKValidium is
     // Indicates if forced batches are disallowed
     bool public isForcedBatchDisallowed;
 
-    // Indicates if the revert mode is active.
-    bool public isRevertModeActive;
-
+    bool public isAllowedToRevertBatches;
+    
     /**
      * @dev Emitted when the trusted sequencer sends a new batch of transactions
      */
@@ -492,14 +505,14 @@ contract CDKValidium is
     }
 
     modifier onlyIfRevertModeIsNotActive() {
-        if(isRevertModeActive) {
+        if(lastRevertModeTimestamp + REVERT_PERIOD >= block.timestamp) {
             revert RevertModeIsActive();
         }
         _;
     }
 
     modifier onlyIfRevertModeIsActive() {
-        if(!isRevertModeActive) {
+        if(lastRevertModeTimestamp + REVERT_PERIOD < block.timestamp) {
             revert RevertModeIsNotActive();
         }
         _;
@@ -834,7 +847,7 @@ contract CDKValidium is
         bytes memory snarkHashBytes = getInputSnarkBytes(
             initNumBatch,
             finalNewBatch,
-            newLocalExitRoot,
+            newLocalExitRoot, 
             oldStateRoot,
             newStateRoot
         );
@@ -846,6 +859,8 @@ contract CDKValidium is
             revert InvalidProof();
         }
 
+  
+
         // Get MATIC reward
         matic.safeTransfer(
             msg.sender,
@@ -855,8 +870,9 @@ contract CDKValidium is
     }
 
     /**
-     * @notice Internal function to consolidate the state automatically once sequence or verify batches are called
-     * It tries to consolidate the first and the middle pending state in the queue
+     * @notice Internal function to consolidate the state automatically once sequence 
+     * or verify batches are called. It tries to consolidate the first and the middle 
+     * pending state in the queue.
      */
     function _tryConsolidatePendingState() internal {
         // Check if there's any state to consolidate
@@ -1756,7 +1772,10 @@ contract CDKValidium is
         if(forcedBatchData.minForcedTimestamp + FORCED_TX_WINDOW > block.timestamp)
             revert TxWindowNotExpired();
 
-        isRevertModeActive = true;
+        lastRevertModeTimestamp = block.timestamp;
+
+        
+        isAllowedToRevertBatches = true;
 
         emit ActivateRevertMode(msg.sender, lastForceBatchSequencedTemp);
     }
@@ -1769,5 +1788,12 @@ contract CDKValidium is
     {
         // The lastVerifiedBatch decreases by one each time the revertLastVerifiedBatch() 
         // function is executed, for each REVERT_PERIOD
+        if(!isAllowedToRevertBatches)
+            revert notAllowedToRevertBatches();
+
+        //oldStateRoot = batchNumToStateRoot[initNumBatch];
+
+        // This function can be executed only once for every REVERT_PERIOD
+        isAllowedToRevertBatches = false;
     }
 }
