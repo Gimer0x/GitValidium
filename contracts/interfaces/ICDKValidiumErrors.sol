@@ -233,4 +233,9 @@ interface ICDKValidiumErrors {
     @dev Thrown when the function revertLastVerifiedBatches has been executed for a REVERT_PERIOD
     */
     error notAllowedToRevertBatches();
+
+    /**
+    @dev Thrown when the function revertLastVerifiedBatches tries to revert a verified batch beyond the FINALITY_PERIOD
+    */
+    error verifiedBeyondFinalityPeriod();
 }

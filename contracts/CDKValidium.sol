@@ -9,7 +9,7 @@ import "./interfaces/IPolygonZkEVMBridge.sol";
 import "./lib/EmergencyManager.sol";
 import "./interfaces/ICDKValidiumErrors.sol";
 import "./interfaces/ICDKDataCommittee.sol";
-//import "hardhat/console.sol";
+import "hardhat/console.sol";
 /**
  * Contract responsible for managing the states and the updates of L2 network.
  * There will be a trusted sequencer, which is able to send transactions.
@@ -104,10 +104,11 @@ contract CDKValidium is
     struct StateRootData {
         uint64 timestamp;
         uint64 initVerifiedBatch;
-        uint64 lastVerifiedBatch;
         bytes32 exitRoot;
-        bytes32 stateRoot;
+        bytes32 oldStateRoot;
     }
+
+    mapping(uint64 => StateRootData) public stateRootData;
 
     // Modulus zkSNARK
     uint256 internal constant _RFIELD =
@@ -155,6 +156,9 @@ contract CDKValidium is
 
     // Max time before entering revert mode
     uint256 constant FORCED_TX_WINDOW = 7 days;
+
+    // Max time before entering revert mode
+    uint256 constant FINALITY_PERIOD = 7 days;
 
     // Revert period duration
     uint256 constant REVERT_PERIOD = 1 hours;
@@ -395,6 +399,8 @@ contract CDKValidium is
      */
 
     event ActivateRevertMode(address _sender, uint64 _lastForcedBatch);
+
+    event RevertLastVerifiedBatch(uint64 _prevlastVerifiedBatch, uint64 lastVerifiedBatch);
 
     /**
      * @param _globalExitRootManager Global exit root manager address
@@ -859,7 +865,13 @@ contract CDKValidium is
             revert InvalidProof();
         }
 
-  
+        // New code
+        stateRootData[finalNewBatch] = StateRootData({
+            timestamp: uint64(block.timestamp),
+            initVerifiedBatch: initNumBatch,
+            exitRoot: newLocalExitRoot,
+            oldStateRoot: oldStateRoot
+        });
 
         // Get MATIC reward
         matic.safeTransfer(
@@ -1774,7 +1786,6 @@ contract CDKValidium is
 
         lastRevertModeTimestamp = block.timestamp;
 
-        
         isAllowedToRevertBatches = true;
 
         emit ActivateRevertMode(msg.sender, lastForceBatchSequencedTemp);
@@ -1786,14 +1797,73 @@ contract CDKValidium is
         ifNotEmergencyState
         onlyIfRevertModeIsActive
     {
-        // The lastVerifiedBatch decreases by one each time the revertLastVerifiedBatch() 
         // function is executed, for each REVERT_PERIOD
         if(!isAllowedToRevertBatches)
             revert notAllowedToRevertBatches();
 
-        //oldStateRoot = batchNumToStateRoot[initNumBatch];
+        uint64 lastVerifiedBatchTemp = lastVerifiedBatch;
+        uint64 lastBatchSequencedTemp = lastBatchSequenced;
+        StateRootData memory stateRootDataTemp = stateRootData[lastVerifiedBatchTemp];
 
+        if(stateRootDataTemp.timestamp + FINALITY_PERIOD < block.timestamp)
+            revert verifiedBeyondFinalityPeriod();
+
+        /*
+        stateRootData[finalNewBatch] = StateRootData({
+            timestamp: uint64(block.timestamp),
+            initVerifiedBatch: initNumBatch,
+            exitRoot: newLocalExitRoot,
+            oldStateRoot: oldStateRoot
+        });
+        */
+
+        // Should we delete the sequenced batches?
+        if (lastBatchSequencedTemp > lastVerifiedBatchTemp)
+            _deleteSequencedBatches(lastBatchSequencedTemp, lastVerifiedBatchTemp);
+
+        // Clean pending state if any
+        if (lastPendingState > 0) {
+            lastPendingState = 0;
+            lastPendingStateConsolidated = 0;
+        }
+        
+        uint64 prevlastVerifiedBatch = stateRootData[lastVerifiedBatchTemp].initVerifiedBatch;
+        bytes32 prevLocalExitRoot = stateRootData[lastVerifiedBatchTemp].exitRoot;
+        
+        delete batchNumToStateRoot[lastVerifiedBatchTemp];
+        delete stateRootData[lastVerifiedBatchTemp];
+
+        lastVerifiedBatch = prevlastVerifiedBatch;
+        
         // This function can be executed only once for every REVERT_PERIOD
         isAllowedToRevertBatches = false;
+
+        // Interact with globalExitRootManager
+        globalExitRootManager.updateExitRoot(prevLocalExitRoot);
+
+        emit RevertLastVerifiedBatch(prevlastVerifiedBatch, lastVerifiedBatchTemp);
+    }
+
+    function _deleteSequencedBatches(uint64 _lastBatchSequenced, uint64 _lastVerifiedBatch) 
+        private 
+    {
+
+        while(_lastBatchSequenced > _lastVerifiedBatch) {
+            uint64 _lastBatchSequencedTemp = sequencedBatches[_lastBatchSequenced].previousLastBatchSequenced;
+            delete sequencedBatches[_lastBatchSequenced];
+            _lastBatchSequenced = _lastBatchSequencedTemp;
+        }
+            
+        lastBatchSequenced = _lastVerifiedBatch;
+    }
+
+    function executeAllForcedTransactions(
+        BatchData[] calldata batches,
+        bytes32 newLocalExitRoot,
+        bytes32 newStateRoot,
+        bytes32[24] calldata proof
+    )   external {
+
+    
     }
 }

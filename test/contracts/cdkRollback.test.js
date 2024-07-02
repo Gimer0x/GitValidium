@@ -42,7 +42,8 @@ describe('CDKValidium', () => {
     const FORCE_BATCH_TIMEOUT = 60 * 60 * 24 * 5; // 5 days
     const MAX_BATCH_MULTIPLIER = 12;
     const HALT_AGGREGATION_TIMEOUT = 60 * 60 * 24 * 7; // 7 days
-    const FORCED_TX_WINDOW = 60 * 60 * 24 * 7 // 7 days
+    const FORCED_TX_WINDOW = 60 * 60 * 24 * 7; // 7 days
+    const FINALITY_PERIOD = 60 * 60 * 24 * 7; // 7 days
     const REVERT_PERIOD = 60 * 60;
     const _MAX_VERIFY_BATCHES = 1000;    
     beforeEach('Deploy contract', async () => {
@@ -161,279 +162,437 @@ describe('CDKValidium', () => {
 
         l2CoinBase = trustedSequencer.address;
     });
+    describe("Revert mode testing", () => {
+        it("should activate revert mode after calling sequenceBatches()", async () => {
+            const l2txDataForceBatch = '0x123456';
+            const maticAmount = await cdkValidiumContract.getForcedBatchFee();
+            const lastGlobalExitRoot = await PolygonZkEVMGlobalExitRoot.getLastGlobalExitRoot();
 
-    it("should activate revert mode after calling sequenceBatches()", async () => {
-        const l2txDataForceBatch = '0x123456';
-        const maticAmount = await cdkValidiumContract.getForcedBatchFee();
-        const lastGlobalExitRoot = await PolygonZkEVMGlobalExitRoot.getLastGlobalExitRoot();
+            let lastRevertModeTimestamp =  await cdkValidiumContract.lastRevertModeTimestamp();
+            expect(lastRevertModeTimestamp.toNumber() + REVERT_PERIOD)
+                .to.be.lessThan((await ethers.provider.getBlock()).timestamp);
 
-        let lastRevertModeTimestamp =  await cdkValidiumContract.lastRevertModeTimestamp();
-        expect(lastRevertModeTimestamp.toNumber() + REVERT_PERIOD)
-            .to.be.lessThan((await ethers.provider.getBlock()).timestamp);
+            await expect(
+                cdkValidiumContract.connect(admin).activateForceBatches(),
+            ).to.emit(cdkValidiumContract, 'ActivateForceBatches');
 
-        await expect(
-            cdkValidiumContract.connect(admin).activateForceBatches(),
-        ).to.emit(cdkValidiumContract, 'ActivateForceBatches');
+            // lastForceBatch should be equal to zero
+            const lastForcedBatch = (await cdkValidiumContract.lastForceBatch()).toNumber();
+            await expect(cdkValidiumContract.connect(user).forceBatch(l2txDataForceBatch, maticAmount))
+                .to.emit(cdkValidiumContract, 'ForceBatch')
+                .withArgs(lastForcedBatch + 1, lastGlobalExitRoot, user.address, '0x');
+            
+            const l2txData = '0x123456';
+            const transactionsHash = calculateBatchHashData(l2txData);
+            const currentTimestamp = (await ethers.provider.getBlock()).timestamp;
 
-        // lastForceBatch should be equal to zero
-        const lastForcedBatch = (await cdkValidiumContract.lastForceBatch()).toNumber();
-         await expect(cdkValidiumContract.connect(user).forceBatch(l2txDataForceBatch, maticAmount))
-            .to.emit(cdkValidiumContract, 'ForceBatch')
-            .withArgs(lastForcedBatch + 1, lastGlobalExitRoot, user.address, '0x');
-        
-        const l2txData = '0x123456';
-        const transactionsHash = calculateBatchHashData(l2txData);
-        const currentTimestamp = (await ethers.provider.getBlock()).timestamp;
+            const batchData = {
+                transactionsHash,
+                globalExitRoot: ethers.constants.HashZero,
+                timestamp: ethers.BigNumber.from(currentTimestamp),
+                minForcedTimestamp: 0
+            }
 
-        const batchData = {
-            transactionsHash,
-            globalExitRoot: ethers.constants.HashZero,
-            timestamp: ethers.BigNumber.from(currentTimestamp),
-            minForcedTimestamp: 0
-        }
+            await ethers.provider.send('evm_setNextBlockTimestamp', [currentTimestamp + FORCED_TX_WINDOW]);
 
-        await ethers.provider.send('evm_setNextBlockTimestamp', [currentTimestamp + FORCED_TX_WINDOW]);
+            // Sequence a batch
+            await expect(cdkValidiumContract.connect(trustedSequencer).sequenceBatches([batchData],l2CoinBase,[]))
+                .to.emit(cdkValidiumContract, "SequenceBatches")
+                .withArgs(1);
 
-        // Sequence a batch
-        await expect(cdkValidiumContract.connect(trustedSequencer).sequenceBatches([batchData],l2CoinBase,[]))
-            .to.emit(cdkValidiumContract, "SequenceBatches")
-            .withArgs(1);
+            const forceBatchStruct1 = {
+                transactions: l2txDataForceBatch,
+                globalExitRoot: lastGlobalExitRoot,
+                minForcedTimestamp: currentTimestamp
+            };
 
-        const forceBatchStruct1 = {
-            transactions: l2txDataForceBatch,
-            globalExitRoot: lastGlobalExitRoot,
-            minForcedTimestamp: currentTimestamp
-        };
+            await expect(cdkValidiumContract.connect(user).enterRevertMode(forceBatchStruct1))
+                .to.emit(cdkValidiumContract, 'ActivateRevertMode')
+                .withArgs(user.address, 1);
 
-        await expect(cdkValidiumContract.connect(user).enterRevertMode(forceBatchStruct1))
-            .to.emit(cdkValidiumContract, 'ActivateRevertMode')
-            .withArgs(user.address, 1);
+            lastRevertModeTimestamp =  await cdkValidiumContract.lastRevertModeTimestamp();
+            expect(lastRevertModeTimestamp.toNumber() + REVERT_PERIOD)
+                .to.be.greaterThanOrEqual((await ethers.provider.getBlock()).timestamp);
+            
+        });
 
-        lastRevertModeTimestamp =  await cdkValidiumContract.lastRevertModeTimestamp();
-        expect(lastRevertModeTimestamp.toNumber() + REVERT_PERIOD)
-            .to.be.greaterThanOrEqual((await ethers.provider.getBlock()).timestamp);
-        
+    
+        it("should activate revert mode after not sequencing a batch using sequenceBatches()", async () => {
+            const l2txDataForceBatch1 = '0x123456';
+            const transactionsHashForceBatch = calculateBatchHashData(l2txDataForceBatch1);
+
+            const l2txDataForceBatch2 = '0x789101';
+            const maticAmount = await cdkValidiumContract.getForcedBatchFee();
+            const lastGlobalExitRoot = await PolygonZkEVMGlobalExitRoot.getLastGlobalExitRoot();
+
+            let lastRevertModeTimestamp =  await cdkValidiumContract.lastRevertModeTimestamp();
+            expect(lastRevertModeTimestamp.toNumber() + REVERT_PERIOD)
+                .to.be.lessThan((await ethers.provider.getBlock()).timestamp);
+
+            await expect(
+                cdkValidiumContract.connect(admin).activateForceBatches(),
+            ).to.emit(cdkValidiumContract, 'ActivateForceBatches');
+
+            // lastForceBatch should be equal to zero
+            const lastForcedBatch1 = (await cdkValidiumContract.lastForceBatch()).toNumber();
+            await expect(cdkValidiumContract.connect(user).forceBatch(l2txDataForceBatch1, maticAmount))
+                .to.emit(cdkValidiumContract, 'ForceBatch')
+                .withArgs(lastForcedBatch1 + 1, lastGlobalExitRoot, user.address, '0x');
+
+            const timestampForceBatch1 = (await ethers.provider.getBlock()).timestamp;
+
+            const forceBatchStruct1 = {
+                transactions: l2txDataForceBatch1,
+                globalExitRoot: lastGlobalExitRoot,
+                minForcedTimestamp: timestampForceBatch1,
+            };
+
+            const lastForcedBatch2 = (await cdkValidiumContract.lastForceBatch()).toNumber();
+            await expect(cdkValidiumContract.connect(user).forceBatch(l2txDataForceBatch2, maticAmount))
+                .to.emit(cdkValidiumContract, 'ForceBatch')
+                .withArgs(lastForcedBatch2 + 1, lastGlobalExitRoot, user.address, '0x');
+
+            const timestampForceBatch2 = (await ethers.provider.getBlock()).timestamp;
+
+            const forceBatchStruct2 = {
+                transactions: l2txDataForceBatch2,
+                globalExitRoot: lastGlobalExitRoot,
+                minForcedTimestamp: timestampForceBatch2,
+            };
+
+            expect(await cdkValidiumContract.lastForceBatchSequenced()).to.be.equal(0);
+            expect(await cdkValidiumContract.lastBatchSequenced()).to.be.equal(0);
+            expect(await cdkValidiumContract.lastForceBatch()).to.be.equal(2);
+
+            // Increment timestamp + ForceBatchTimeOut (5 days)
+            await ethers.provider.send('evm_setNextBlockTimestamp', [timestampForceBatch1 + FORCE_BATCH_TIMEOUT]);
+
+            const l2txData = '0x123456';
+            const transactionsHash = calculateBatchHashData(l2txData);
+            const currentTimestamp = (await ethers.provider.getBlock()).timestamp;
+
+            const batchData1 = {
+                transactionsHash,
+                globalExitRoot: ethers.constants.HashZero,
+                timestamp: ethers.BigNumber.from(currentTimestamp),
+                minForcedTimestamp: 0
+            }
+            
+            const batchData2 = {
+                transactionsHash: transactionsHashForceBatch,
+                globalExitRoot: lastGlobalExitRoot,
+                timestamp: currentTimestamp,
+                minForcedTimestamp: timestampForceBatch1
+            }
+
+            // Sequence a batch
+            await expect(cdkValidiumContract.connect(trustedSequencer).sequenceBatches(
+                        [batchData1, batchData2],l2CoinBase,[]
+                ))
+                .to.emit(cdkValidiumContract, "SequenceBatches")
+                .withArgs(2);
+
+            expect(await cdkValidiumContract.lastForceBatchSequenced()).to.be.equal(1);
+            expect(await cdkValidiumContract.lastBatchSequenced()).to.be.equal(2);
+            expect(await cdkValidiumContract.lastForceBatch()).to.be.equal(2);
+
+            await ethers.provider.send('evm_setNextBlockTimestamp', [timestampForceBatch2 + FORCED_TX_WINDOW + 1]);
+
+            await expect(cdkValidiumContract.connect(user).enterRevertMode(forceBatchStruct2))
+                .to.emit(cdkValidiumContract, 'ActivateRevertMode')
+                .withArgs(user.address, 2);
+
+            lastRevertModeTimestamp =  await cdkValidiumContract.lastRevertModeTimestamp();
+            expect(lastRevertModeTimestamp.toNumber() + REVERT_PERIOD)
+                .to.be.greaterThanOrEqual((await ethers.provider.getBlock()).timestamp);
+        });
+
+        it("should activate revert mode after not sequencing a batch using sequenceForceBatches()", async () => {
+            const l2txDataForceBatch1 = '0x123456';
+            const l2txDataForceBatch2 = '0x789101';
+            const maticAmount = await cdkValidiumContract.getForcedBatchFee();
+            const lastGlobalExitRoot = await PolygonZkEVMGlobalExitRoot.getLastGlobalExitRoot();
+
+            let lastRevertModeTimestamp =  await cdkValidiumContract.lastRevertModeTimestamp();
+            expect(lastRevertModeTimestamp.toNumber() + REVERT_PERIOD)
+                .to.be.lessThan((await ethers.provider.getBlock()).timestamp);
+
+            await expect(
+                cdkValidiumContract.connect(admin).activateForceBatches(),
+            ).to.emit(cdkValidiumContract, 'ActivateForceBatches');
+
+            // lastForceBatch should be equal to zero
+            const lastForcedBatch1 = (await cdkValidiumContract.lastForceBatch()).toNumber();
+            await expect(cdkValidiumContract.connect(user).forceBatch(l2txDataForceBatch1, maticAmount))
+                .to.emit(cdkValidiumContract, 'ForceBatch')
+                .withArgs(lastForcedBatch1 + 1, lastGlobalExitRoot, user.address, '0x');
+
+            const timestampForceBatch = (await ethers.provider.getBlock()).timestamp;
+
+            const forceBatchStruct1 = {
+                transactions: l2txDataForceBatch1,
+                globalExitRoot: lastGlobalExitRoot,
+                minForcedTimestamp: timestampForceBatch,
+            };
+
+            const forceBatchStruct2 = {
+                transactions: l2txDataForceBatch2,
+                globalExitRoot: lastGlobalExitRoot,
+                minForcedTimestamp: timestampForceBatch + 1,
+            };
+
+            const lastForcedBatch2 = (await cdkValidiumContract.lastForceBatch()).toNumber();
+            await expect(cdkValidiumContract.connect(user).forceBatch(l2txDataForceBatch2, maticAmount))
+                .to.emit(cdkValidiumContract, 'ForceBatch')
+                .withArgs(lastForcedBatch2 + 1, lastGlobalExitRoot, user.address, '0x');
+
+            expect(await cdkValidiumContract.lastForceBatchSequenced()).to.be.equal(0);
+            expect(await cdkValidiumContract.lastBatchSequenced()).to.be.equal(0);
+            expect(await cdkValidiumContract.lastForceBatch()).to.be.equal(2);
+
+            // Increment timestamp + ForceBatchTimeOut (5 days)
+            await ethers.provider.send('evm_setNextBlockTimestamp', [timestampForceBatch + FORCE_BATCH_TIMEOUT]);
+
+            await expect(cdkValidiumContract.connect(user).sequenceForceBatches([forceBatchStruct1]))
+                .to.emit(cdkValidiumContract, 'SequenceForceBatches')
+                .withArgs(1);
+
+            expect(await cdkValidiumContract.lastForceBatchSequenced()).to.be.equal(1);
+            expect(await cdkValidiumContract.lastBatchSequenced()).to.be.equal(1);
+            expect(await cdkValidiumContract.lastForceBatch()).to.be.equal(2);
+
+            await ethers.provider.send('evm_setNextBlockTimestamp', [timestampForceBatch + FORCED_TX_WINDOW + 1]);
+
+            await expect(cdkValidiumContract.connect(user).enterRevertMode(forceBatchStruct2))
+                .to.emit(cdkValidiumContract, 'ActivateRevertMode')
+                .withArgs(user.address, 2);
+
+            lastRevertModeTimestamp =  await cdkValidiumContract.lastRevertModeTimestamp();
+            expect(lastRevertModeTimestamp.toNumber() + REVERT_PERIOD)
+                .to.be.greaterThanOrEqual((await ethers.provider.getBlock()).timestamp);
+        });
+
+        it("should not activat revert mode if forced batches is not active", async () => {
+            const l2txDataForceBatch1 = '0x123456';
+            const lastGlobalExitRoot = await PolygonZkEVMGlobalExitRoot.getLastGlobalExitRoot();
+
+            const timestampForceBatch = (await ethers.provider.getBlock()).timestamp;
+
+            const forceBatchStruct = {
+                transactions: l2txDataForceBatch1,
+                globalExitRoot: lastGlobalExitRoot,
+                minForcedTimestamp: timestampForceBatch,
+            };
+
+            await expect(cdkValidiumContract.connect(user).enterRevertMode(forceBatchStruct))
+                .to.be.revertedWith("ForceBatchNotAllowed")
+
+            let lastRevertModeTimestamp =  await cdkValidiumContract.lastRevertModeTimestamp();
+            expect(lastRevertModeTimestamp.toNumber() + REVERT_PERIOD)
+                .to.be.lessThan((await ethers.provider.getBlock()).timestamp);
+        });
+
+        it("should not activate revert mode if emergency state is activated", async () => {
+            const l2txData = '0x123456';
+            const transactionsHash = calculateBatchHashData(l2txData);
+            const currentTimestamp = (await ethers.provider.getBlock()).timestamp;
+            const lastGlobalExitRoot = await PolygonZkEVMGlobalExitRoot.getLastGlobalExitRoot();
+
+            const batchData = {
+                transactionsHash,
+                globalExitRoot: ethers.constants.HashZero,
+                timestamp: ethers.BigNumber.from(currentTimestamp),
+                minForcedTimestamp: 0,
+            };
+
+            // Sequence batch
+            const lastBatchSequenced = 1;
+            await expect(cdkValidiumContract.connect(trustedSequencer).sequenceBatches(
+                    [batchData], trustedSequencer.address, []
+                ))
+                .to.emit(cdkValidiumContract, 'SequenceBatches')
+                .withArgs(lastBatchSequenced);
+
+            const sequencedTimestmap = Number((await cdkValidiumContract.sequencedBatches(1)).sequencedTimestamp);
+            const haltTimeout = HALT_AGGREGATION_TIMEOUT;
+
+            await ethers.provider.send('evm_setNextBlockTimestamp', [sequencedTimestmap + haltTimeout]);
+
+            // Succesfully acitvate emergency state
+            await expect(cdkValidiumContract.connect(aggregator1).activateEmergencyState(1))
+                .to.emit(cdkValidiumContract, 'EmergencyStateActivated');
+
+            const timestampForceBatch = (await ethers.provider.getBlock()).timestamp;
+
+            const forceBatchStruct = {
+                transactions: l2txData,
+                globalExitRoot: lastGlobalExitRoot,
+                minForcedTimestamp: timestampForceBatch,
+            };
+
+            await expect(
+                cdkValidiumContract.connect(admin).activateForceBatches(),
+            ).to.emit(cdkValidiumContract, 'ActivateForceBatches');
+
+            await expect(cdkValidiumContract.connect(user).enterRevertMode(forceBatchStruct))
+                .to.be.revertedWith("OnlyNotEmergencyState");
+        });
     });
+    describe("Rollback testing", () => {
+        let l2txDataForceBatch;
+        let maticAmount;
+        let lastGlobalExitRoot;
+        let currentTimestamp;
+        let forceBatchStruct1;
+        let newLocalExitRoot;
+        let newStateRoot;
 
-    it("should activate revert mode after not sequencing a batch using function sequenceBatches()", async () => {
-        const l2txDataForceBatch1 = '0x123456';
-        const transactionsHashForceBatch = calculateBatchHashData(l2txDataForceBatch1);
+        beforeEach('Deploy contract', async () => {
+            l2txDataForceBatch = '0x123456';
+            maticAmount = await cdkValidiumContract.getForcedBatchFee();
+            lastGlobalExitRoot = await PolygonZkEVMGlobalExitRoot.getLastGlobalExitRoot();
 
-        const l2txDataForceBatch2 = '0x789101';
-        const maticAmount = await cdkValidiumContract.getForcedBatchFee();
-        const lastGlobalExitRoot = await PolygonZkEVMGlobalExitRoot.getLastGlobalExitRoot();
+            newLocalExitRoot = '0x0000000000000000000000000000000000000000000000000000000000000000';
+            newStateRoot = '0x0000000000000000000000000000000000000000000000000000000000000000';
 
-        let lastRevertModeTimestamp =  await cdkValidiumContract.lastRevertModeTimestamp();
-        expect(lastRevertModeTimestamp.toNumber() + REVERT_PERIOD)
-            .to.be.lessThan((await ethers.provider.getBlock()).timestamp);
+            // Activate force batches by admin role
+            await expect(
+                cdkValidiumContract.connect(admin).activateForceBatches(),
+            ).to.emit(cdkValidiumContract, 'ActivateForceBatches');
 
-        await expect(
-            cdkValidiumContract.connect(admin).activateForceBatches(),
-        ).to.emit(cdkValidiumContract, 'ActivateForceBatches');
+            const lastForcedBatch = (await cdkValidiumContract.lastForceBatch()).toNumber();
 
-        // lastForceBatch should be equal to zero
-        const lastForcedBatch1 = (await cdkValidiumContract.lastForceBatch()).toNumber();
-         await expect(cdkValidiumContract.connect(user).forceBatch(l2txDataForceBatch1, maticAmount))
-            .to.emit(cdkValidiumContract, 'ForceBatch')
-            .withArgs(lastForcedBatch1 + 1, lastGlobalExitRoot, user.address, '0x');
+            // lastForcedBatch should be equal to zero. 
+            await expect(cdkValidiumContract.connect(user).forceBatch(l2txDataForceBatch, maticAmount))
+                .to.emit(cdkValidiumContract, 'ForceBatch')
+                .withArgs(lastForcedBatch + 1, lastGlobalExitRoot, user.address, '0x');
 
-        const timestampForceBatch1 = (await ethers.provider.getBlock()).timestamp;
+            expect((await cdkValidiumContract.lastForceBatch()).toNumber()).to.be.equal(1);
 
-        const forceBatchStruct1 = {
-            transactions: l2txDataForceBatch1,
-            globalExitRoot: lastGlobalExitRoot,
-            minForcedTimestamp: timestampForceBatch1,
-        };
+            const l2txData = '0x123456';
+            const transactionsHash = calculateBatchHashData(l2txData);
+            currentTimestamp = (await ethers.provider.getBlock()).timestamp;
 
-        const lastForcedBatch2 = (await cdkValidiumContract.lastForceBatch()).toNumber();
-        await expect(cdkValidiumContract.connect(user).forceBatch(l2txDataForceBatch2, maticAmount))
-            .to.emit(cdkValidiumContract, 'ForceBatch')
-            .withArgs(lastForcedBatch2 + 1, lastGlobalExitRoot, user.address, '0x');
+            const batchData = {
+                transactionsHash,
+                globalExitRoot: ethers.constants.HashZero,
+                timestamp: ethers.BigNumber.from(currentTimestamp),
+                minForcedTimestamp: 0
+            }
 
-        const timestampForceBatch2 = (await ethers.provider.getBlock()).timestamp;
+            // Sequence a batch
+            await expect(cdkValidiumContract.connect(trustedSequencer).sequenceBatches([batchData],l2CoinBase,[]))
+                .to.emit(cdkValidiumContract, "SequenceBatches")
+                .withArgs(1);
 
-        const forceBatchStruct2 = {
-            transactions: l2txDataForceBatch2,
-            globalExitRoot: lastGlobalExitRoot,
-            minForcedTimestamp: timestampForceBatch2,
-        };
 
-        expect(await cdkValidiumContract.lastForceBatchSequenced()).to.be.equal(0);
-        expect(await cdkValidiumContract.lastBatchSequenced()).to.be.equal(0);
-        expect(await cdkValidiumContract.lastForceBatch()).to.be.equal(2);
+            forceBatchStruct1 = {
+                transactions: l2txDataForceBatch,
+                globalExitRoot: lastGlobalExitRoot,
+                minForcedTimestamp: currentTimestamp
+            };
 
-        // Increment timestamp + ForceBatchTimeOut (5 days)
-        await ethers.provider.send('evm_setNextBlockTimestamp', [timestampForceBatch1 + FORCE_BATCH_TIMEOUT]);
+            await ethers.provider.send('evm_setNextBlockTimestamp', [currentTimestamp + FORCED_TX_WINDOW]);
 
-        const l2txData = '0x123456';
-        const transactionsHash = calculateBatchHashData(l2txData);
-        const currentTimestamp = (await ethers.provider.getBlock()).timestamp;
+        });
 
-        const batchData1 = {
-            transactionsHash,
-            globalExitRoot: ethers.constants.HashZero,
-            timestamp: ethers.BigNumber.from(currentTimestamp),
-            minForcedTimestamp: 0
-        }
-        
-        const batchData2 = {
-            transactionsHash: transactionsHashForceBatch,
-            globalExitRoot: lastGlobalExitRoot,
-            timestamp: currentTimestamp,
-            minForcedTimestamp: timestampForceBatch1
-        }
+        it("should revert the last verified batch by a trusted aggregator", async () => {
+            await expect(cdkValidiumContract.connect(user).enterRevertMode(forceBatchStruct1))
+                .to.emit(cdkValidiumContract, 'ActivateRevertMode')
+                .withArgs(user.address, 1);
 
-        // Sequence a batch
-        await expect(cdkValidiumContract.connect(trustedSequencer).sequenceBatches(
-                    [batchData1, batchData2],l2CoinBase,[]
-            ))
-            .to.emit(cdkValidiumContract, "SequenceBatches")
-            .withArgs(2);
+            const pendingState = 0;
+            const numBatch = (await cdkValidiumContract.lastVerifiedBatch()) + 1;
 
-        expect(await cdkValidiumContract.lastForceBatchSequenced()).to.be.equal(1);
-        expect(await cdkValidiumContract.lastBatchSequenced()).to.be.equal(2);
-        expect(await cdkValidiumContract.lastForceBatch()).to.be.equal(2);
+            await expect(
+                cdkValidiumContract.connect(trustedAggregator).verifyBatchesTrustedAggregator(
+                    pendingState,
+                    numBatch - 1,
+                    numBatch,
+                    newLocalExitRoot,
+                    newStateRoot,
+                    zkProofFFlonk,
+                ),
+            ).to.emit(cdkValidiumContract, 'VerifyBatchesTrustedAggregator')
+                .withArgs(numBatch, newStateRoot, trustedAggregator.address);
 
-        await ethers.provider.send('evm_setNextBlockTimestamp', [timestampForceBatch2 + FORCED_TX_WINDOW + 1]);
+            expect(await cdkValidiumContract.lastVerifiedBatch()).to.be.equal(1);
 
-        await expect(cdkValidiumContract.connect(user).enterRevertMode(forceBatchStruct2))
-            .to.emit(cdkValidiumContract, 'ActivateRevertMode')
-            .withArgs(user.address, 2);
+            await expect(cdkValidiumContract.revertLastVerifiedBatch()).not.to.be.reverted;
 
-        lastRevertModeTimestamp =  await cdkValidiumContract.lastRevertModeTimestamp();
-        expect(lastRevertModeTimestamp.toNumber() + REVERT_PERIOD)
-            .to.be.greaterThanOrEqual((await ethers.provider.getBlock()).timestamp);
-    });
+            expect(await cdkValidiumContract.lastVerifiedBatch()).to.be.equal(ZERO_VALUE);
+            
+        });
 
-    it("should activate revert mode after not sequencing a batch using function sequenceForceBatches()", async () => {
-        const l2txDataForceBatch1 = '0x123456';
-        const l2txDataForceBatch2 = '0x789101';
-        const maticAmount = await cdkValidiumContract.getForcedBatchFee();
-        const lastGlobalExitRoot = await PolygonZkEVMGlobalExitRoot.getLastGlobalExitRoot();
+        it("should revert the last verified batch by a user", async () => {
+            const pendingState = 0;
+            const numBatch = (await cdkValidiumContract.lastVerifiedBatch()) + 1;
 
-        let lastRevertModeTimestamp =  await cdkValidiumContract.lastRevertModeTimestamp();
-        expect(lastRevertModeTimestamp.toNumber() + REVERT_PERIOD)
-            .to.be.lessThan((await ethers.provider.getBlock()).timestamp);
+            await expect(
+                cdkValidiumContract.connect(user).verifyBatches(
+                    pendingState,
+                    numBatch - 1,
+                    numBatch,
+                    newLocalExitRoot,
+                    newStateRoot,
+                    zkProofFFlonk,
+                ),
+            ).to.emit(cdkValidiumContract, 'VerifyBatches')
+                .withArgs(numBatch, newStateRoot, user.address);
 
-        await expect(
-            cdkValidiumContract.connect(admin).activateForceBatches(),
-        ).to.emit(cdkValidiumContract, 'ActivateForceBatches');
+            currentTimestamp = (await ethers.provider.getBlock()).timestamp;
 
-        // lastForceBatch should be equal to zero
-        const lastForcedBatch1 = (await cdkValidiumContract.lastForceBatch()).toNumber();
-         await expect(cdkValidiumContract.connect(user).forceBatch(l2txDataForceBatch1, maticAmount))
-            .to.emit(cdkValidiumContract, 'ForceBatch')
-            .withArgs(lastForcedBatch1 + 1, lastGlobalExitRoot, user.address, '0x');
+            await ethers.provider.send('evm_setNextBlockTimestamp', [currentTimestamp + pendingStateTimeoutDefault]);
 
-        const timestampForceBatch = (await ethers.provider.getBlock()).timestamp;
+            await cdkValidiumContract.consolidatePendingState(1);
 
-        const forceBatchStruct1 = {
-            transactions: l2txDataForceBatch1,
-            globalExitRoot: lastGlobalExitRoot,
-            minForcedTimestamp: timestampForceBatch,
-        };
+            await expect(cdkValidiumContract.revertLastVerifiedBatch())
+                .to.be.revertedWith("RevertModeIsNotActive");
 
-        const forceBatchStruct2 = {
-            transactions: l2txDataForceBatch2,
-            globalExitRoot: lastGlobalExitRoot,
-            minForcedTimestamp: timestampForceBatch + 1,
-        };
+            await expect(cdkValidiumContract.connect(user).enterRevertMode(forceBatchStruct1))
+                .to.emit(cdkValidiumContract, 'ActivateRevertMode')
+                .withArgs(user.address, 1);
 
-        const lastForcedBatch2 = (await cdkValidiumContract.lastForceBatch()).toNumber();
-        await expect(cdkValidiumContract.connect(user).forceBatch(l2txDataForceBatch2, maticAmount))
-            .to.emit(cdkValidiumContract, 'ForceBatch')
-            .withArgs(lastForcedBatch2 + 1, lastGlobalExitRoot, user.address, '0x');
+            expect(await cdkValidiumContract.lastVerifiedBatch()).to.be.equal(1);
 
-        expect(await cdkValidiumContract.lastForceBatchSequenced()).to.be.equal(0);
-        expect(await cdkValidiumContract.lastBatchSequenced()).to.be.equal(0);
-        expect(await cdkValidiumContract.lastForceBatch()).to.be.equal(2);
+            await expect(cdkValidiumContract.revertLastVerifiedBatch())
+                .to.emit(cdkValidiumContract, "RevertLastVerifiedBatch")
+                .withArgs(0, 1);
 
-        // Increment timestamp + ForceBatchTimeOut (5 days)
-        await ethers.provider.send('evm_setNextBlockTimestamp', [timestampForceBatch + FORCE_BATCH_TIMEOUT]);
+            // Should not be allowed to enter revert mode again. 
+            await expect(cdkValidiumContract.revertLastVerifiedBatch())
+                .to.be.revertedWith("notAllowedToRevertBatches");
 
-        await expect(cdkValidiumContract.connect(user).sequenceForceBatches([forceBatchStruct1]))
-            .to.emit(cdkValidiumContract, 'SequenceForceBatches')
-            .withArgs(1);
+            expect(await cdkValidiumContract.lastVerifiedBatch()).to.be.equal(ZERO_VALUE);
+        });
 
-        expect(await cdkValidiumContract.lastForceBatchSequenced()).to.be.equal(1);
-        expect(await cdkValidiumContract.lastBatchSequenced()).to.be.equal(1);
-        expect(await cdkValidiumContract.lastForceBatch()).to.be.equal(2);
+        it("should prevent reverting a beyond the finality period", async () => {
+            const pendingState = 0;
+            
+            const numBatch = (await cdkValidiumContract.lastVerifiedBatch()) + 1;
+            
+            await expect(
+                cdkValidiumContract.connect(user).verifyBatches(
+                    pendingState,
+                    numBatch - 1,
+                    numBatch,
+                    newLocalExitRoot,
+                    newStateRoot,
+                    zkProofFFlonk,
+                ),
+            ).to.emit(cdkValidiumContract, 'VerifyBatches')
+                .withArgs(numBatch, newStateRoot, user.address);
 
-        await ethers.provider.send('evm_setNextBlockTimestamp', [timestampForceBatch + FORCED_TX_WINDOW + 1]);
+            currentTimestamp = (await ethers.provider.getBlock()).timestamp;
 
-        await expect(cdkValidiumContract.connect(user).enterRevertMode(forceBatchStruct2))
-            .to.emit(cdkValidiumContract, 'ActivateRevertMode')
-            .withArgs(user.address, 2);
+            await ethers.provider.send('evm_setNextBlockTimestamp', [currentTimestamp + FINALITY_PERIOD]);
 
-        lastRevertModeTimestamp =  await cdkValidiumContract.lastRevertModeTimestamp();
-        expect(lastRevertModeTimestamp.toNumber() + REVERT_PERIOD)
-            .to.be.greaterThanOrEqual((await ethers.provider.getBlock()).timestamp);
-    });
+            await expect(cdkValidiumContract.connect(user).enterRevertMode(forceBatchStruct1))
+                .to.emit(cdkValidiumContract, 'ActivateRevertMode')
+                .withArgs(user.address, 1);
 
-    it("should not activat revert mode if forced batches is not active", async () => {
-        const l2txDataForceBatch1 = '0x123456';
-        const lastGlobalExitRoot = await PolygonZkEVMGlobalExitRoot.getLastGlobalExitRoot();
-
-        const timestampForceBatch = (await ethers.provider.getBlock()).timestamp;
-
-        const forceBatchStruct = {
-            transactions: l2txDataForceBatch1,
-            globalExitRoot: lastGlobalExitRoot,
-            minForcedTimestamp: timestampForceBatch,
-        };
-
-        await expect(cdkValidiumContract.connect(user).enterRevertMode(forceBatchStruct))
-            .to.be.revertedWith("ForceBatchNotAllowed")
-
-        let lastRevertModeTimestamp =  await cdkValidiumContract.lastRevertModeTimestamp();
-        expect(lastRevertModeTimestamp.toNumber() + REVERT_PERIOD)
-            .to.be.lessThan((await ethers.provider.getBlock()).timestamp);
-    });
-
-    it("should not activate revert mode if emergency state is activated", async () => {
-        const l2txData = '0x123456';
-        const transactionsHash = calculateBatchHashData(l2txData);
-        const currentTimestamp = (await ethers.provider.getBlock()).timestamp;
-        const lastGlobalExitRoot = await PolygonZkEVMGlobalExitRoot.getLastGlobalExitRoot();
-
-        const batchData = {
-            transactionsHash,
-            globalExitRoot: ethers.constants.HashZero,
-            timestamp: ethers.BigNumber.from(currentTimestamp),
-            minForcedTimestamp: 0,
-        };
-
-        // Sequence batch
-        const lastBatchSequenced = 1;
-        await expect(cdkValidiumContract.connect(trustedSequencer).sequenceBatches(
-                [batchData], trustedSequencer.address, []
-            ))
-            .to.emit(cdkValidiumContract, 'SequenceBatches')
-            .withArgs(lastBatchSequenced);
-
-        const sequencedTimestmap = Number((await cdkValidiumContract.sequencedBatches(1)).sequencedTimestamp);
-        const haltTimeout = HALT_AGGREGATION_TIMEOUT;
-
-        await ethers.provider.send('evm_setNextBlockTimestamp', [sequencedTimestmap + haltTimeout]);
-
-        // Succesfully acitvate emergency state
-        await expect(cdkValidiumContract.connect(aggregator1).activateEmergencyState(1))
-            .to.emit(cdkValidiumContract, 'EmergencyStateActivated');
-
-        const timestampForceBatch = (await ethers.provider.getBlock()).timestamp;
-
-        const forceBatchStruct = {
-            transactions: l2txData,
-            globalExitRoot: lastGlobalExitRoot,
-            minForcedTimestamp: timestampForceBatch,
-        };
-
-         await expect(
-            cdkValidiumContract.connect(admin).activateForceBatches(),
-        ).to.emit(cdkValidiumContract, 'ActivateForceBatches');
-
-        await expect(cdkValidiumContract.connect(user).enterRevertMode(forceBatchStruct))
-            .to.be.revertedWith("OnlyNotEmergencyState");
+            await expect(cdkValidiumContract.revertLastVerifiedBatch())
+                .to.be.revertedWith("verifiedBeyondFinalityPeriod");
+        });
     });
 });
-
