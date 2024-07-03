@@ -402,6 +402,8 @@ contract CDKValidium is
 
     event RevertLastVerifiedBatch(uint64 _prevlastVerifiedBatch, uint64 lastVerifiedBatch);
 
+    event ExecuteAllForcedTransactions(uint64 _lastVerifiedBatch, bytes32 _newStateRoot, address _sender);
+
     /**
      * @param _globalExitRootManager Global exit root manager address
      * @param _matic MATIC token address
@@ -1124,7 +1126,7 @@ contract CDKValidium is
      */
     function sequenceForceBatches(
         ForcedBatchData[] calldata batches
-    ) external isForceBatchAllowed ifNotEmergencyState {
+    ) public isForceBatchAllowed ifNotEmergencyState {
         uint256 batchesNum = batches.length;
 
         if (batchesNum == 0) {
@@ -1808,15 +1810,6 @@ contract CDKValidium is
         if(stateRootDataTemp.timestamp + FINALITY_PERIOD < block.timestamp)
             revert verifiedBeyondFinalityPeriod();
 
-        /*
-        stateRootData[finalNewBatch] = StateRootData({
-            timestamp: uint64(block.timestamp),
-            initVerifiedBatch: initNumBatch,
-            exitRoot: newLocalExitRoot,
-            oldStateRoot: oldStateRoot
-        });
-        */
-
         // Should we delete the sequenced batches?
         if (lastBatchSequencedTemp > lastVerifiedBatchTemp)
             _deleteSequencedBatches(lastBatchSequencedTemp, lastVerifiedBatchTemp);
@@ -1853,7 +1846,7 @@ contract CDKValidium is
             delete sequencedBatches[_lastBatchSequenced];
             _lastBatchSequenced = _lastBatchSequencedTemp;
         }
-            
+
         lastBatchSequenced = _lastVerifiedBatch;
     }
 
@@ -1864,6 +1857,146 @@ contract CDKValidium is
         bytes32[24] calldata proof
     )   external {
 
-    
+        uint256 batchesNum = batches.length;
+        if (batchesNum == 0) {
+            revert SequenceZeroBatches();
+        }
+
+        if (batchesNum > _MAX_VERIFY_BATCHES) {
+            revert ExceedMaxVerifyBatches();
+        }
+
+        if (
+            uint256(lastForceBatchSequenced) + batchesNum >
+            uint256(lastForceBatch)
+        ) {
+            revert ForceBatchesOverflow();
+        }
+
+        // Store storage variables in memory, to save gas, because will be overrided multiple times
+        uint64 currentTimestamp = lastTimestamp;
+        uint64 currentBatchSequenced = lastBatchSequenced;
+        uint64 initNumBatch = currentBatchSequenced;
+        uint64 currentLastForceBatchSequenced = lastForceBatchSequenced;
+        bytes32 currentAccInputHash = sequencedBatches[currentBatchSequenced]
+            .accInputHash;
+
+        for (uint256 i = 0; i < batchesNum; i++) {
+            // Load current sequence
+            BatchData memory currentBatch = batches[i];
+
+            // Check if it's a forced batch
+            currentLastForceBatchSequenced++;
+
+            // Check forced data matches
+            bytes32 hashedForcedBatchData = keccak256(
+                abi.encodePacked(
+                    currentBatch.transactionsHash,
+                    currentBatch.globalExitRoot,
+                    currentBatch.minForcedTimestamp
+                )
+            );
+
+            if (
+                hashedForcedBatchData !=
+                forcedBatches[currentLastForceBatchSequenced]
+            ) {
+                revert ForcedDataDoesNotMatch();
+            }
+
+            // Delete forceBatch data since won't be used anymore
+            delete forcedBatches[currentLastForceBatchSequenced];
+
+            // Check timestamp is bigger than min timestamp
+            if (currentBatch.timestamp < currentBatch.minForcedTimestamp) {
+                revert SequencedTimestampBelowForcedTimestamp();
+            }
+
+            // Check Batch timestamps are correct
+            if (
+                currentBatch.timestamp < currentTimestamp ||
+                currentBatch.timestamp > block.timestamp
+            ) {
+                revert SequencedTimestampInvalid();
+            }
+            // Should I be more restrictive with the last batch?
+
+            // Calculate next accumulated input hash
+            currentAccInputHash = keccak256(
+                abi.encodePacked(
+                    currentAccInputHash,
+                    currentBatch.transactionsHash,
+                    currentBatch.globalExitRoot,
+                    currentBatch.timestamp,
+                    msg.sender //l2Coinbase
+                )
+            );
+
+            // Update timestamp
+            currentTimestamp = currentBatch.timestamp;
+        }
+
+        // Validate that the data committee has signed the accInputHash for this sequence
+        // dataCommitteeAddress.verifySignatures(currentAccInputHash, signaturesAndAddrs);
+        
+        // Update currentBatchSequenced
+        currentBatchSequenced += uint64(batchesNum);
+        // Store back the storage variables
+        lastTimestamp = currentTimestamp;
+
+        // Sanity check, should be unreachable
+        if (currentLastForceBatchSequenced > lastForceBatch) {
+            revert ForceBatchesOverflow();
+        }
+
+        // Update sequencedBatches mapping
+        sequencedBatches[currentBatchSequenced] = SequencedBatchData({
+            accInputHash: currentAccInputHash,
+            sequencedTimestamp: uint64(block.timestamp),
+            previousLastBatchSequenced: lastBatchSequenced
+        });
+
+        lastBatchSequenced = currentBatchSequenced;
+        lastForceBatchSequenced = currentLastForceBatchSequenced;
+
+        // Update global exit root if there are new deposits
+        // bridgeAddress.updateGlobalExitRoot();
+
+        emit SequenceBatches(currentBatchSequenced);
+
+
+        // Verify Batches
+        console.log(initNumBatch);
+        console.log(lastBatchSequenced);
+
+        _verifyAndRewardBatches(
+            0,
+            initNumBatch,
+            lastBatchSequenced,
+            newLocalExitRoot,
+            newStateRoot,
+            proof
+        );
+
+        // Consolidate state
+        lastVerifiedBatch = lastBatchSequenced;
+        batchNumToStateRoot[lastBatchSequenced] = newStateRoot;
+
+        // Clean pending state if any
+        // Do I need it?
+        if (lastPendingState > 0) {
+            lastPendingState = 0;
+            lastPendingStateConsolidated = 0;
+        }
+
+        // Interact with globalExitRootManager
+        globalExitRootManager.updateExitRoot(newLocalExitRoot);
+
+        emit ExecuteAllForcedTransactions(
+            lastVerifiedBatch,
+            newStateRoot,
+            msg.sender
+        );
+
     }
 }

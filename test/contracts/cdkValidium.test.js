@@ -6,7 +6,7 @@ const { contractUtils } = require('@0xpolygonhermez/zkevm-commonjs');
 
 const { calculateSnarkInput, calculateAccInputHash, calculateBatchHashData } = contractUtils;
 
-describe('CDKValidium', () => {
+describe('CDKValidium Test', () => {
     let deployer;
     let trustedAggregator;
     let trustedSequencer;
